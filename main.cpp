@@ -2,83 +2,228 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
+#include <numeric>
 #include <vector>
 #include <limits>
+#include <cstdlib>
+#include <exception>
 
-constexpr const char* outfile_name = "neldermead.out";
 constexpr const char* logfile_name = "neldermead.log";
-constexpr const char* simplexfile_name = "neldermead.simplex";
-constexpr const char* statefile_name = "neldermead.state"; // REFLECT, EXPAND, CONTRACT, SHRINK 1...N+1
+constexpr const char* statefile_name = "neldermead.state";
 
 constexpr double alpha = 1; // reflection (default are standard coefficients from wikipedia, also used in numerical recipes)
 constexpr double gamma = 2; // expansion
 constexpr double sigma = 0.5; // shrink
 constexpr double rho = 0.5; // contraction
 constexpr double eps = std::numeric_limits<double>::epsilon() * 1e6; // = TINY from numerical recipes
+constexpr double inf = std::numeric_limits<double>::infinity();
+constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+constexpr double pi = 3.14159'26535'89793'23846'26433'83279'502884;
 
-// not needed anymore:
-// constexpr size_t max_iter = 1000; // max iterations for nelder mead
-// constexpr bool accurate = true; // true: relative error criterion from numerical recipes, false: stopping criterion from brnt.eu (a very little tiny bit faster...)
-//constexpr double epsilon = 1e-4; // meaning: if this is 1e-X and accurate=true, than all function values in the simplex will have the leading X significant digits in common! so 4 significant digits should be enough! (see optimize_gate/data/*)
+/* // program saves its current state in a state file of this format
+   // (if not present, we start a new optimization, flushing the log file; comments as shown here are not allowed in the file)
+    EVALUATION 0
+    state // N+1 by N (x0; ...; xN)
+    0 ... 0
+    :     :
+    0 ... 0
+    FSIMPLEX // N+1 (f(x0), ..., f(xN))
+    0 ... 0
+    X // 3 by N (reflected, expanded, contracted)
+    0 ... 0
+    0 ... 0
+    0 ... 0
+    FX // 3 (f(reflected), f(expanded), f(contracted))
+    0 0 0
+    MODE // can be BUILDING idx, REFLECTING, EXPANDING, CONTRACTING, SHRINKING idx
+*/
 
 using namespace std;
 
-int main(int argc, char* argv[])
+void simplex_info(const vector<double>& simplex, const vector<double> fsimplex, const size_t N,
+                  size_t& idx_min, size_t idx_max, size_t& idx_second_max, double& delta, vector<double>& centroid)
 {
-    // maintains neldermead.simplex, neldermead.out, neldermead.log
-    // starts new optimization whenever there is no neldermead.simplex file (flushes neldermead.out)
+    // partially order function in fsimplex values and compute delta
+    vector<size_t> indices(N+1);
+    iota(indices.begin(), indices.end(), 0);
+    sort(indices.begin(), indices.end(), [&fsimplex](size_t i, size_t j){return fsimplex[i] < fsimplex[j];});
+    idx_min = indices[0];
+    idx_max = indices[N];
+    idx_second_max = indices[N-1];
+    delta = 2*abs(fsimplex[idx_min] - fsimplex[idx_max])/(abs(fsimplex[idx_min]) + abs(fsimplex[idx_max]) + eps);
 
-    if(argc <= 2) {
-        cerr << "usage: " << argv[0] << " parameters-file energy-file" << endl;
-        return -1;
-    }
-
-    // read parameters (N)
-    ifstream parametersfile(argv[1]);
-    vector<double> parameters;
-    if(!parametersfile) {
-        cerr << "error: parameters-file '" << argv[1] << "' could not be opened" << endl;
-        return -1;
-    }
-    double d;
-    while(parametersfile >> p)
-        parameters.push_back(p);
-    const size_t N = parameters.size();
-    if(N == 0){
-       cerr << "error: parameters-file '" << argv[1] << "' has no data (only floating point numbers separated by whitespace are allowed)" << endl;
-       return -1;
-    }
-    parametersfile.close();
-
-    // read energy
-    ifstream energyfile(argv[2]);
-    double energy;
-    if(!(energyfile >> energy)) {
-        cerr << "error: energy-file '" << argv[1] << "' could not be read" << endl;
-        return -1;
-    }
-    energyfile.close();
-
-    // read simplex ? x (N+1) values (parameters, energy)
-    ifstream simplexfilein(simplexfile_name);
-    vector<double> simplex, fsimplex;
-    for(int i = 0; simplexfilein >> d; ++i)
-        if(i % (N+1) < N)
-            simplex.push_back(p);
-        else
-            fsimplex.push_back(p);
-    if(simplex.size() % N || simplex.size() > (N+1)*N || fsimplex.size() != N+1) {
-        cerr << "error: simplex file '" << simplexfile_name << "' needs to contain ? x (N+1) values, i.e. ? times (parameters, energy), with ? <= N+1" << endl;
-        return -1;
-    }
-    simplexfilein.close();
-
-    // prepare output files (flushed if simplex was empty)
-    ofstream outfile(outfile_name, simplex.empty() ? ios::out : ios::app);
-    ofstream logfile(outfile_name, simplex.empty() ? ios::out : ios::app);
+    // compute centroid of the simplex
+    fill(centroid.begin(), centroid.end(), 0.);
+    for(size_t i = 0; i < N+1; ++i)
+        if(i != idx_max)
+            for(size_t j = 0; j < N; ++j)
+                centroid[j] += simplex[i*N+j];
+    for(size_t j = 0; j < N; ++j)
+        centroid[j] /= N;
 }
 
-            size_t idx_min = 0, idx_max = 0, idx_second_max = 0;
+int main(int argc, char* argv[])
+{
+    try
+    {
+        if(argc <= 2) {
+            cerr << "usage: " << argv[0] << " parameters-file energy-file [characteristic-parameter-scale=PI]" << endl;
+            return -1;
+        }
+
+        // if no scale is given, use pi to initialize the simplex; change that for other parameters!
+        const double parameter_scale = (argc == 3 ? stod(argv[2]) : pi);
+
+        // read parameters (N)
+        ifstream parametersfilein(argv[1]);
+        vector<double> parameters;
+        if(!parametersfilein) {
+            cerr << "error: parameters-file '" << argv[1] << "' could not be opened" << endl;
+            return -1;
+        }
+        double d;
+        while(parametersfilein >> d)
+            parameters.push_back(d);
+        const size_t N = parameters.size();
+        if(N < 2){
+           cerr << "error: parameters-file '" << argv[1] << "' has not enough data (only floating point numbers separated by whitespace are allowed; could only parse " << N << " parameters; need at least 2 parameters to optimize)" << endl;
+           return -1;
+        }
+        parametersfilein.close();
+
+        // read energy
+        ifstream energyfile(argv[2]);
+        double energy;
+        if(!(energyfile >> energy)) {
+            cerr << "error: energy-file '" << argv[1] << "' could not be read" << endl;
+            return -1;
+        }
+        energyfile.close();
+
+        // read state from statefile and prepare logfile
+        ifstream statefilein(statefile_name);
+        ofstream logfile;
+        vector<double> simplex((N+1)*N), fsimplex(N+1);
+        vector<double> x(3*N), fx(3);
+        string mode = "BUILDING", part;
+        size_t mode_idx = 0, evaluation = 1;
+        if(statefilein >> part) // state file exists
+        {
+            if(part != "EVALUATION" || !(statefilein >> evaluation)) cerr << "error: state file '" << statefile_name << "' is corrupt (part: EVALUATION)" << endl;
+            statefilein >> part;
+            if(part != "SIMPLEX") cerr << "error: state file '" << statefile_name << "' is corrupt (part: SIMPLEX)" << endl;
+            for(double& d : simplex)
+                statefilein >> d;
+            statefilein >> part;
+            if(part != "FSIMPLEX") cerr << "error: state file '" << statefile_name << "' is corrupt (part: FSIMPLEX)" << endl;
+            for(double& d : fsimplex)
+                statefilein >> d;
+            statefilein >> part;
+            if(part != "X") cerr << "error: state file '" << statefile_name << "' is corrupt (part: X)" << endl;
+            for(double& d : x)
+                statefilein >> d;
+            statefilein >> part;
+            if(part != "FX") cerr << "error: state file '" << statefile_name << "' is corrupt (part: FX)" << endl;
+            for(double& d : fx)
+                statefilein >> d;
+            statefilein >> mode;
+            if(mode == "BUILDING" || mode == "SHRINKING")
+                statefilein >> mode_idx;
+            else if(mode != "REFLECTING" && mode != "EXPANDING" && mode != "CONTRACTING")
+                cerr << "error: state file '" << statefile_name << "' is corrupt: MODE '" << mode << "' is unknown" << endl;
+            if(!statefilein) {
+                cerr << "error: reached end of state file '" << statefile_name << "'; it could not be parsed properly";
+                return -1;
+            }
+            logfile.open(logfile_name, ios::app);
+        }
+        else // state file did not exist; flush logfile too
+        {
+            logfile.open(logfile_name);
+            logfile << "evaluation\tmode\tdelta\tenergy";
+            for(size_t i = 0; i < N; ++i)
+                logfile << "\tp" << i;
+            logfile << endl;
+        }
+        logfile << evaluation << '\t' << mode;
+        statefilein.close();
+
+        // main part of the algorithm
+        size_t idx_min = 0, idx_max = 0, idx_second_max = 0;
+        double delta = nan;
+        vector<double> centroid(N);
+        if(mode == "BUILDING") // building the simplex, currently at vector mode_idx
+        {
+            copy_n(parameters.begin(), N, simplex.begin() + mode_idx*(N+1));
+            fsimplex[mode_idx] = energy;
+
+            if(mode_idx < N)
+            {
+                copy_n(simplex.begin(), N, parameters.begin());
+                parameters[mode_idx] += parameter_scale; // NOTE: maybe should do fmod?
+            }
+            else
+            {
+                mode = "REFLECTING";
+                simplex_info(simplex, fsimplex, N, idx_min, idx_max, idx_second_max, delta, centroid);
+            }
+        }
+        else
+        {
+
+            // act on mode
+            if(mode == "REFLECTING")
+            {
+
+            }
+        }
+
+        // update and close logfile
+        logfile << '\t' << delta << '\t' << energy;
+        for(double p : parameters)
+            logfile << '\t' << p;
+        logfile << endl;
+        logfile.close();
+
+        // save new parameters
+        ofstream parametersfileout(argv[1]);
+        for(size_t i = 0; i < N; ++i)
+            parametersfileout << parameters[i] << (i % 2 == 1 ? '\n' : ' ');
+        parametersfileout.close();
+
+        // save state file
+        ofstream statefileout(statefile_name);
+        statefileout << "EVALUATION " << ++evaluation << endl;
+        statefileout << "SIMPLEX" << endl;
+        for(size_t i = 0; i < simplex.size(); ++i)
+            statefileout << simplex[i] << (i % N == N-1 ? '\n' : '\t');
+        statefileout << "FSIMPLEX" << endl;
+        for(size_t i = 0; i < fsimplex.size(); ++i)
+            statefileout << fsimplex[i] << (i == N ? '\n' : '\t');
+        statefileout << "X" << endl;
+        for(size_t i = 0; i < x.size(); ++i)
+            statefileout << x[i] << (i % N == N-1 ? '\n' : '\t');
+        statefileout << "FX" << endl;
+        for(size_t i = 0; i < fx.size(); ++i)
+            statefileout << fx[i] << (i == 2 ? '\n' : '\t');
+        statefileout << mode;
+        if(mode == "BUILDING" || mode == "SHRINKING")
+            statefileout << ' ' << mode_idx;
+        statefileout << endl;
+        statefileout.close();
+    }
+    catch(const std::exception& e)
+    {
+        cerr << "error (exception): " << e.what() << std::endl;
+        return -1;
+    }
+}
+
+/*
+// constexpr size_t max_iter = 1000; // max iterations for nelder mead
+// constexpr bool accurate = true; // true: relative error criterion from numerical recipes, false: stopping criterion from brnt.eu (a very little tiny bit faster...)
+//constexpr double epsilon = 1e-4; // meaning: if this is 1e-X and accurate=true, than all function values in the simplex will have the leading X significant digits in common! so 4 significant digits should be enough! (see optimize_gate/data/)
+
             size_t num_eval = 0;
             size_t num_iter = 0;
             double delta = numeric_limits<double>::infinity();
@@ -131,7 +276,7 @@ int main(int argc, char* argv[])
                 }
                 else if(++num_iter >= max_iter)
                 {
-                    output << "reached maximum number of iterations" << endl;
+                    output << "reached maximum number of evaluations" << endl;
                     break;
                 }
 
@@ -239,4 +384,4 @@ int main(int argc, char* argv[])
         }
     }
 }
-/**/
+*/
