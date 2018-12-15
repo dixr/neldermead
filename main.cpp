@@ -11,7 +11,7 @@
 constexpr const char* logfile_name = "neldermead.log";
 constexpr const char* statefile_name = "neldermead.state";
 
-constexpr double alpha = 1; // reflection (default are standard coefficients from wikipedia, also used in numerical recipes)
+constexpr double alpha = 1; // reflection (default are standard coefficients from Numerical Recipes, also on wikipedia)
 constexpr double gamma = 2; // expansion
 constexpr double sigma = 0.5; // shrink
 constexpr double rho = 0.5; // contraction
@@ -35,7 +35,7 @@ constexpr double pi = 3.14159'26535'89793'23846'26433'83279'502884;
     0 ... 0
     FX // 3 (f(reflected), f(expanded), f(contracted))
     0 0 0
-    MODE // can be BUILDING idx, REFLECTING, EXPANDING, CONTRACTING, SHRINKING idx
+    MODE // can be INITIALIZING idx, REFLECTING, EXPANDING, CONTRACTING, SHRINKING idx
 */
 
 using namespace std;
@@ -104,8 +104,8 @@ int main(int argc, char* argv[])
         ifstream statefilein(statefile_name);
         ofstream logfile;
         vector<double> simplex((N+1)*N), fsimplex(N+1);
-        vector<double> x(3*N), fx(3);
-        string mode = "BUILDING", part;
+        vector<double> x(3*N), fx(3); // reflected, expanded, contracted
+        string mode = "INITIALIZING", part;
         size_t mode_idx = 0, evaluation = 1;
         if(statefilein >> part) // state file exists
         {
@@ -127,8 +127,10 @@ int main(int argc, char* argv[])
             for(double& d : fx)
                 statefilein >> d;
             statefilein >> mode;
-            if(mode == "BUILDING" || mode == "SHRINKING")
-                statefilein >> mode_idx;
+            if(mode == "INITIALIZING" || mode == "SHRINKING") {
+                if(!(statefilein >> mode_idx) || mode_idx > N)
+                    cerr << "error: state file '" << statefile_name << "' is corrupt: mode could not be parsed or mode index " << mode_idx << " is invalid (part: " << mode << ")" << endl;
+            }
             else if(mode != "REFLECTING" && mode != "EXPANDING" && mode != "CONTRACTING")
                 cerr << "error: state file '" << statefile_name << "' is corrupt: MODE '" << mode << "' is unknown" << endl;
             if(!statefilein) {
@@ -140,19 +142,21 @@ int main(int argc, char* argv[])
         else // state file did not exist; flush logfile too
         {
             logfile.open(logfile_name);
-            logfile << "evaluation\tmode\tdelta\tenergy";
+            logfile << "evaluation\tmode";
             for(size_t i = 0; i < N; ++i)
                 logfile << "\tp" << i;
-            logfile << endl;
+            logfile << "\tdelta\tenergy" << endl;
         }
         logfile << evaluation << '\t' << mode;
+        for(double p : parameters) // need to log parameters now; they will be overwritten later
+            logfile << '\t' << p;
         statefilein.close();
 
         // main part of the algorithm
         size_t idx_min = 0, idx_max = 0, idx_second_max = 0;
         double delta = nan;
         vector<double> centroid(N);
-        if(mode == "BUILDING") // building the simplex, currently at vector mode_idx
+        if(mode == "INITIALIZING") // building the simplex, currently at vector mode_idx
         {
             copy_n(parameters.begin(), N, simplex.begin() + mode_idx*(N+1));
             fsimplex[mode_idx] = energy;
@@ -161,28 +165,119 @@ int main(int argc, char* argv[])
             {
                 copy_n(simplex.begin(), N, parameters.begin());
                 parameters[mode_idx] += parameter_scale; // NOTE: maybe should do fmod?
+                ++mode_idx;
             }
             else
             {
                 mode = "REFLECTING";
                 simplex_info(simplex, fsimplex, N, idx_min, idx_max, idx_second_max, delta, centroid);
+                for(size_t i = 0; i < N; ++i)
+                    x[i] = centroid[i] + alpha*(centroid[i] - simplex[idx_max*N+i]);
+                copy_n(x.begin(), N, parameters.begin());
             }
         }
         else
         {
+            simplex_info(simplex, fsimplex, N, idx_min, idx_max, idx_second_max, delta, centroid);
 
             // act on mode
             if(mode == "REFLECTING")
             {
+                fx[0] = energy;
+                if(fx[0] <= fsimplex[idx_min])
+                {
+                    mode = "EXPANDING";
+                    for(size_t i = 0; i < N; ++i)
+                        x[N+i] = centroid[i] + gamma*(x[i] - centroid[i]);
+                    copy_n(x.begin() + N, N, parameters.begin());
+                }
+                else if(fx[0] >= fsimplex[idx_second_max])
+                {
+                    mode = "CONTRACTING";
+                    for(size_t i = 0; i < N; ++i)
+                        x[2*N+i] = centroid[i] + rho*(simplex[idx_max*N+i] - centroid[i]);
+                    copy_n(x.begin() + 2*N, N, parameters.begin());
+                }
+                else
+                {
+                    copy_n(parameters.begin(), N, simplex.begin() + idx_max*(N+1));
+                    fsimplex[idx_max] = energy;
 
+                    mode = "REFLECTING";
+                    simplex_info(simplex, fsimplex, N, idx_min, idx_max, idx_second_max, delta, centroid);
+                    for(size_t i = 0; i < N; ++i)
+                        x[i] = centroid[i] + alpha*(centroid[i] - simplex[idx_max*N+i]);
+                    copy_n(x.begin(), N, parameters.begin());
+                }
+            }
+            else if(mode == "EXPANDING")
+            {
+                fx[1] = energy;
+                if(fx[0] <= fx[1])
+                {
+                    copy_n(x.begin(), N, simplex.begin() + idx_max*(N+1));
+                    fsimplex[idx_max] = fx[0];
+                }
+                else
+                {
+                    copy_n(x.begin() + N, N, simplex.begin() + idx_max*(N+1));
+                    fsimplex[idx_max] = fx[1];
+                }
+
+                mode = "REFLECTING";
+                simplex_info(simplex, fsimplex, N, idx_min, idx_max, idx_second_max, delta, centroid);
+                for(size_t i = 0; i < N; ++i)
+                    x[i] = centroid[i] + alpha*(centroid[i] - simplex[idx_max*N+i]);
+                copy_n(x.begin(), N, parameters.begin());
+            }
+            else if(mode == "CONTRACTING")
+            {
+                fx[2] = energy;
+                if(fx[2] <= fsimplex[idx_max])
+                {
+                    copy_n(x.begin() + 2*N, N, simplex.begin() + idx_max*(N+1));
+                    fsimplex[idx_max] = fx[2];
+
+                    mode = "REFLECTING";
+                    simplex_info(simplex, fsimplex, N, idx_min, idx_max, idx_second_max, delta, centroid);
+                    for(size_t i = 0; i < N; ++i)
+                        x[i] = centroid[i] + alpha*(centroid[i] - simplex[idx_max*N+i]);
+                    copy_n(x.begin(), N, parameters.begin());
+                }
+                else
+                {
+                    mode = "SHRINKING";
+                    mode_idx = (idx_min > 0 ? 0 : 1);
+
+                    for(size_t i = 0; i < N+1; ++i)
+                        if(i != idx_min)
+                            for(size_t j = 0; j < N; ++j)
+                                simplex[i*N+j] = simplex[idx_min*N+j] + sigma*(simplex[i*N+j] - simplex[idx_min*N+j]);
+                    copy_n(simplex.begin(), N, parameters.begin());
+                }
+            }
+            else if(mode == "SHRINKING")
+            {
+                fsimplex[mode_idx] = energy;
+
+                if(++mode_idx == idx_min)
+                    ++mode_idx;
+
+                if(mode_idx < N)
+                    copy_n(simplex.begin() + mode_idx*N, N, parameters.begin());
+                else
+                {
+                    mode = "REFLECTING";
+                    simplex_info(simplex, fsimplex, N, idx_min, idx_max, idx_second_max, delta, centroid);
+                    for(size_t i = 0; i < N; ++i)
+                        x[i] = centroid[i] + alpha*(centroid[i] - simplex[idx_max*N+i]);
+                    copy_n(x.begin(), N, parameters.begin());
+                }
             }
         }
 
         // update and close logfile
-        logfile << '\t' << delta << '\t' << energy;
-        for(double p : parameters)
-            logfile << '\t' << p;
-        logfile << endl;
+        logfile << '\t' << delta << '\t' << energy << endl;
         logfile.close();
 
         // save new parameters
@@ -207,7 +302,7 @@ int main(int argc, char* argv[])
         for(size_t i = 0; i < fx.size(); ++i)
             statefileout << fx[i] << (i == 2 ? '\n' : '\t');
         statefileout << mode;
-        if(mode == "BUILDING" || mode == "SHRINKING")
+        if(mode == "INITIALIZING" || mode == "SHRINKING")
             statefileout << ' ' << mode_idx;
         statefileout << endl;
         statefileout.close();
