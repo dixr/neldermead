@@ -1,7 +1,7 @@
 all: neldermead
 
 neldermead: main.cpp
-	g++ -pedantic -Wall -Weffc++ -Wextra -g -std=c++1z $^ -o $@
+	g++ -pedantic -Wall -Weffc++ -Wextra -Og -g $^ -o $@
 
 clean:
 	$(RM) neldermead

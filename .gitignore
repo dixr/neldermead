@@ -2,3 +2,7 @@ tmp/
 utils.hpp
 logic.jpg
 neldermead
+neldermead.*
+test/*.dat
+tar.sh
+*.tar.gz
