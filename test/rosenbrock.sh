@@ -26,4 +26,4 @@ do
 done
 
 echo
-tail -v -n+0 neldermead.log neldermead.state parameters.dat
+tail -v -n+0 neldermead.log neldermead.state parameters.dat min-*

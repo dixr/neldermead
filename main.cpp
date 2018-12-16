@@ -1,5 +1,6 @@
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <algorithm>
 #include <numeric>
@@ -18,7 +19,7 @@ constexpr double rho = 0.5; // contraction
 constexpr double eps = std::numeric_limits<double>::epsilon() * 1e6; // = TINY from numerical recipes
 constexpr double inf = std::numeric_limits<double>::infinity();
 constexpr double nanq = std::numeric_limits<double>::quiet_NaN();
-constexpr double pi = 3.14159'26535'89793'23846'26433'83279'502884;
+constexpr double pi = 3.1415926535897932;
 
 /* // program saves its current state in a state file of this format
    // (if not present, we start a new optimization, flushing the log file; comments as shown here are not allowed in the file)
@@ -104,8 +105,8 @@ int main(int argc, char* argv[])
         ifstream statefilein(statefile_name);
         ofstream logfile;
         logfile.precision(10);
-        vector<double> simplex((N+1)*N), fsimplex(N+1);
-        vector<double> x(3*N), fx(3); // reflected, expanded, contracted
+        vector<double> simplex((N+1)*N), fsimplex(N+1,energy);
+        vector<double> x(3*N), fx(3,energy); // reflected, expanded, contracted
         string mode = "INITIALIZING", part;
         size_t mode_idx = 0, evaluations = 1;
         if(statefilein >> part) // state file exists
@@ -146,8 +147,12 @@ int main(int argc, char* argv[])
             }
             logfile.open(logfile_name, ios::app);
         }
-        else // state file did not exist; flush logfile too
+        else // state file did not exist, initialize simplex and x to the same points so that each of them is valid; flush logfile too
         {
+            for(size_t i = 0; i < N+1; ++i)
+                copy_n(parameters.begin(), N, simplex.begin() + i*N);
+            for(size_t i = 0; i < 3; ++i)
+                copy_n(parameters.begin(), N, x.begin() + i*N);
             logfile.open(logfile_name);
             logfile << "evaluation\tmode";
             for(size_t i = 0; i < N; ++i)
@@ -315,6 +320,17 @@ int main(int argc, char* argv[])
             statefileout << ' ' << mode_idx;
         statefileout << '\n';
         statefileout.close();
+
+        // save the best point so far as minimum (start with simplex as it always contains valid points)
+        simplex.insert(simplex.end(), x.begin(), x.end());
+        fsimplex.insert(fsimplex.end(), fx.begin(), fx.end());
+        size_t argmin = min_element(fsimplex.begin(), fsimplex.end()) - fsimplex.begin();
+        ofstream(string("min-")+argv[2]) << setprecision(10) << fsimplex[argmin] << endl;
+        ofstream minparametersfileout(string("min-")+argv[1]);
+        minparametersfileout.precision(10);
+        for(size_t i = 0; i < N; ++i)
+            minparametersfileout << simplex[argmin*N+i] << (i % 2 == 1 ? '\n' : ' ');
+        minparametersfileout.close();
     }
     catch(const std::invalid_argument& e)
     {

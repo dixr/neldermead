@@ -1,7 +1,9 @@
+CXX?=g++
+
 all: neldermead
 
 neldermead: main.cpp
-	g++ -pedantic -Wall -Weffc++ -Wextra -Og -g $^ -o $@
+	$(CXX) -pedantic -Wall -Weffc++ -Wextra -Og -g --std=c++11 $^ -o $@
 
 clean:
 	$(RM) neldermead
