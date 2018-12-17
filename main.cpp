@@ -321,7 +321,7 @@ int main(int argc, char* argv[])
         statefileout << '\n';
         statefileout.close();
 
-        // save the best point so far as minimum (start with simplex as it always contains valid points)
+        // save the best point so far as minimum (start with the simplex as it always contains valid points)
         simplex.insert(simplex.end(), x.begin(), x.end());
         fsimplex.insert(fsimplex.end(), fx.begin(), fx.end());
         size_t argmin = min_element(fsimplex.begin(), fsimplex.end()) - fsimplex.begin();

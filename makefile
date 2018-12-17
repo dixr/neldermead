@@ -1,9 +1,10 @@
 CXX?=g++
+CXXFLAGS?=-pedantic -Wall -Weffc++ -Wextra -Og -g --std=c++11
 
 all: neldermead
 
 neldermead: main.cpp
-	$(CXX) -pedantic -Wall -Weffc++ -Wextra -Og -g --std=c++11 $^ -o $@
+	$(CXX) $(CXXFLAGS) $^ -o $@
 
 clean:
 	$(RM) neldermead
