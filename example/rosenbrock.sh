@@ -21,7 +21,7 @@ for i in $(seq $iterations)
 do
     read x0 x1 <parameters.dat
     echo "(1-($x0))^2 + 100*($x1-($x0)*($x0))^2" | bc -l >energy.dat
-    ../neldermead parameters.dat energy.dat $delta
+    ../neldermead parameters.dat energy.dat "$delta"
 done
 
 echo

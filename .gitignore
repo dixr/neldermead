@@ -1,9 +1,7 @@
-tmp/
-utils.hpp
-logic.jpg
 neldermead
-neldermead.*
-test/*.dat
+example/*.dat
+example/neldermead.state
 tar.sh
 *.tar.gz
+logic.jpg
 TODO

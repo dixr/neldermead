@@ -6,10 +6,12 @@ set multiplot layout 3,1 margins 0.12,0.95,0.12,0.95
 set border lw 2
 unset xlabel
 set logscale y
+set format y '%.1e'
 do for [c in 'delta energy'] {
     set ylabel ''.c font ',14'
     plot datafile u 1:c w lines lw 2 lc rgb 'red'
     unset logscale y
+    unset format y
 }
 set key autotitle columnhead
 set xlabel 'evaluation' font ',14'
