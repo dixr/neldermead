@@ -19,7 +19,6 @@ constexpr double rho = 0.5;  // contraction
 constexpr double eps = std::numeric_limits<double>::epsilon() * 1e6;  // = TINY
 constexpr double inf = std::numeric_limits<double>::infinity();
 constexpr double nanq = std::numeric_limits<double>::quiet_NaN();
-constexpr double pi = 3.1415926535897932;
 
 /*  //program saves its current state in a state file of this format
     // (if not present, we start a new optimization, flushing the log file;
@@ -73,15 +72,12 @@ int main(int argc, char* argv[]) {
     try {
         if (argc < 3) {
             cerr << "usage: " << argv[0] << " parameters-file energy-file "
-                    "[characteristic-parameter-scale=PI]" << endl;
+                 "[characteristic-scale-p0=1 ... characteristic-scale-pN-1=1]"
+                 << endl;
             return -1;
         }
 
-        // if no scale is given, use pi to initialize the simplex
-        // (NOTE: might be a good idea to different scales for the parameters)
-        const double parameter_scale = (argc == 4 ? stod(argv[3]) : pi);
-
-        // read parameters (N)
+        // read parameters (also determines N)
         ifstream parametersfilein(argv[1]);
         vector<double> parameters;
         if (!parametersfilein) {
@@ -92,26 +88,39 @@ int main(int argc, char* argv[]) {
         double d;
         while (parametersfilein >> d)
             parameters.push_back(d);
+        parametersfilein.close();
         const size_t N = parameters.size();
         if (N < 2) {
            cerr << "error: parameters-file '" << argv[1]
                 << "' has not enough data (only floating point numbers"
-                   " separated by whitespace are allowed; could only parse "
+                " separated by whitespace are allowed; could only parse "
                 << N << " parameters; need at least 2 parameters to optimize)"
                 << endl;
            return -1;
         }
-        parametersfilein.close();
 
         // read energy
         ifstream energyfile(argv[2]);
         double energy;
         if (!(energyfile >> energy)) {
-            cerr << "error: energy-file '" << argv[1]
+            cerr << "error: energy-file '" << argv[2]
                  << "' could not be read" << endl;
             return -1;
         }
         energyfile.close();
+
+        // parse the characteristic scales for the parameters
+        vector<double> parameter_scales(N, 1.);
+        if (argc == 4) {
+            parameter_scales.assign(N, stod(argv[3]));
+        } else if (argc - 3U == N) {
+            for (size_t i = 0; i < N; ++i)
+                parameter_scales[i] = stod(argv[3+i]);
+        } else if (argc != 3) {
+            cerr << "error: wrong number of parameters given; either pass 1, N="
+                 << N << ", or no characteristic scales" << endl;
+            return -1;
+        }
 
         // read state from statefile and prepare logfile
         ifstream statefilein(statefile_name);
@@ -155,7 +164,7 @@ int main(int argc, char* argv[]) {
                 if (!(statefilein >> mode_idx) || mode_idx > N)
                     cerr << "error: state file '" << statefile_name
                          << "' is corrupt: mode could not be parsed "
-                            "or mode index " << mode_idx
+                         "or mode index " << mode_idx
                          << " is invalid (part: " << mode << ")" << endl;
             } else if (mode != "REFLECTING"
                     && mode != "EXPANDING"
@@ -199,7 +208,7 @@ int main(int argc, char* argv[]) {
 
             if (mode_idx < N) {
                 copy_n(simplex.begin(), N, parameters.begin());
-                parameters[mode_idx] += parameter_scale;
+                parameters[mode_idx] += parameter_scales[mode_idx];
                 ++mode_idx;
             } else {
                 mode = "REFLECTING";
@@ -345,7 +354,9 @@ int main(int argc, char* argv[]) {
         minparametersfileout.close();
     }
     catch(const std::invalid_argument& e) {
-        cerr << "error: invalid argument (" << e.what() << ")" << endl;
+        cerr << "error: invalid argument (" << e.what()
+             << "): some of the characteristic "
+             "scales are not convertible to double" << endl;
         return -1;
     }
     catch(const std::exception& e) {
