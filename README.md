@@ -52,23 +52,27 @@ bash rosenbrock.sh .5 1.5 140  # 140 iterations starting from (.5,1.5)
 gnuplot plot.plt  # plot neldermead.log, see rosenbrock.png
 ```
 
+## Illustration of operations
+
+![Basic Nelder-Mead operations](/imgs/neldermead.png)
+
 ## Practical Advise
 
 - As with many other minimization algorithms, the initial point
-  (and sometimes also the given characteristic scales) are crucial for the
+  (and sometimes also the given characteristic scales) is crucial for the
   minimization to succeed.
-- In practice, the algorithm works very well to fine-tune parameters
-  given by some theory/model.
-- In multidimensional minimization problems, any algorithm may converge to a
-  local minimum (which may not be the global minimum but still a reasonably good
-  solution.
+- In practice, the algorithm works very well to fine-tune a few parameters,
+  where the initial values are given by some theory/model.
+- In multidimensional minimization problems, any algorithm may only converge
+  to a local minimum (which may not be the global minimum but still a
+  reasonably good solution).
 - To escape from a local minimum, it may be a good idea to run another
   minimization starting from the previous result in **min-parameters-file**
   with the characteristic scales reduced by a factor of 10.
 
 ## References
 
-1. J. Nelder, R. Mead, *A Simplex Method for Function   Minimization*,
+1. J. Nelder, R. Mead, *A Simplex Method for Function Minimization*,
    **Computer Journal 7 (308)**, 1965
 
 2. W. Press, S. Teukolsky, W. Vetterling, B. Flannery,
